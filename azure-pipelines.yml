@@ -1,54 +1,49 @@
 name: Build and deploy ASP app to Azure Web App - sxltest
 
-on:
-  push:
-    branches:
-      - master
-  workflow_dispatch:
+trigger:
+- master
 
 jobs:
-  build:
-    runs-on: windows-latest
+- job: build
+  pool:
+    vmImage: 'windows-latest'
 
-    steps:
-      - uses: actions/checkout@v2
+  steps:
+  - task: UseDotNet@2
+    inputs:
+      packageType: 'sdk'
+      version: '5.x'
+      installationPath: $(Agent.ToolsDirectory)/dotnet
 
-      - name: Setup MSBuild path
-        uses: microsoft/setup-msbuild@v1.0.2
+  - task: NuGetToolInstaller@1
 
-      - name: Setup NuGet
-        uses: NuGet/setup-nuget@v1.0.5
+  - task: NuGetCommand@2
+    inputs:
+      restoreSolution: '$(solution)'
 
-      - name: Restore NuGet packages
-        run: nuget restore
+  - task: VSBuild@1
+    inputs:
+      solution: '**/*.sln'
+      msbuildArgs: '/p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=true /p:SkipInvalidConfigurations=true /p:PackageLocation="$(Build.ArtifactStagingDirectory)\WebApp.zip"'
+      platform: 'Any CPU'
+      configuration: 'Release'
 
-      - name: Publish to folder
-        run: msbuild /nologo /verbosity:m /t:Build /t:pipelinePreDeployCopyAllFilesToOneFolder /p:_PackageTempDir="\published\"
+  - task: PublishBuildArtifacts@1
+    inputs:
+      PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+      ArtifactName: 'drop'
+      publishLocation: 'Container'
 
-      - name: Upload artifact for deployment job
-        uses: actions/upload-artifact@v2
-        with:
-          name: ASP-app
-          path: '/published/**'
+- job: deploy
+  dependsOn: build
+  pool:
+    vmImage: 'windows-latest'
 
-  deploy:
-    runs-on: windows-latest
-    needs: build
-    environment:
-      name: 'Production'
-      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
+  steps:
+  - task: DownloadBuildArtifacts@0
+    inputs:
+      buildType: 'current'
+      downloadType: 'single'
+      artifactName: 'drop'
+      downloadPath: '$(System.ArtifactsDirectory)'
 
-    steps:
-      - name: Download artifact from build job
-        uses: actions/download-artifact@v2
-        with:
-          name: ASP-app
-
-      - name: Deploy to Azure Web App
-        id: deploy-to-webapp
-        uses: azure/webapps-deploy@v2
-        with:
-          app-name: 'sxltest'
-          slot-name: 'Production'
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_5ABD5BFC719E4E019A5A6E9D514B97D0 }}
-          package: .
